@@ -2,9 +2,26 @@ import { useState, useRef, useEffect } from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Send, Loader2, X as CloseIcon } from "lucide-react"; // Import CloseIcon
+import { Send, Loader2 } from "lucide-react";
 import { UserProfile } from "./OnboardingModal";
 import hkLogo from "@/assets/hk-logo.jpeg";
+
+// --- (NEW) IMPORT THE EMBED COMPONENT ---
+import YouTubeEmbed from "./YouTubeEmbed";
+
+// --- (NEW) DEFINE THE VIDEO DATA SHAPE ---
+interface VideoData {
+  videoId: string;
+  title: string;
+  thumbnailUrl: string;
+}
+
+// --- (MODIFIED) MESSAGE INTERFACE ---
+// Content can now be a string OR a video object
+interface Message {
+  role: "user" | "assistant";
+  content: string | { type: 'video', data: VideoData };
+}
 
 interface ChatInterfaceProps {
   open: boolean;
@@ -12,40 +29,7 @@ interface ChatInterfaceProps {
   userProfile: UserProfile | null;
 }
 
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  // We no longer need the "type" field, as all messages will be text.
-  // The video will be handled by a separate state.
-}
-
-// NEW Floating Player Component
-const FloatingVideoPlayer = ({ videoId, onClose }: { videoId: string; onClose: () => void }) => {
-  return (
-    <div 
-      // This positions it inside the modal (which has z-50)
-      // It will float in the bottom-right corner, above the input.
-      className="absolute bottom-24 right-8 w-80 h-auto bg-[#1a1a1a] border border-white/20 rounded-lg shadow-2xl z-[60] overflow-hidden animate-in fade-in zoom-in-95"
-    >
-      <div className="h-6 w-full bg-[#005c91] text-white/80 flex items-center justify-between px-2">
-        <span className="text-xs font-medium">Video Player</span>
-        <button onClick={onClose} className="hover:text-white">
-          <CloseIcon className="w-4 h-4" />
-        </button>
-      </div>
-      <div className="aspect-video"> {/* This ensures the iframe keeps its ratio */}
-        <iframe
-          className="w-full h-full"
-          src={`https://www.youtube.com/embed/${videoId}?autoplay=1`} // Add autoplay
-          title="YouTube video player"
-          frameBorder="0"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-        ></iframe>
-      </div>
-    </div>
-  );
-};
+// --- (REMOVED) The old FloatingVideoPlayer component is no longer needed ---
 
 export const ChatInterface = ({ open, onOpenChange, userProfile }: ChatInterfaceProps) => {
   const [messages, setMessages] = useState<Message[]>([
@@ -60,8 +44,7 @@ export const ChatInterface = ({ open, onOpenChange, userProfile }: ChatInterface
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // --- NEW STATE FOR THE FLOATING PLAYER ---
-  const [floatingVideoId, setFloatingVideoId] = useState<string | null>(null);
+  // --- (REMOVED) floatingVideoId state is no longer needed ---
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -75,7 +58,6 @@ export const ChatInterface = ({ open, onOpenChange, userProfile }: ChatInterface
     const textToSend = messageText || input;
     if (!textToSend.trim()) return;
 
-    // Add user message
     const userMessage: Message = { 
       role: "user", 
       content: textToSend,
@@ -91,7 +73,8 @@ export const ChatInterface = ({ open, onOpenChange, userProfile }: ChatInterface
       .slice(1) // Skip the initial assistant greeting
       .map(msg => ({
         role: msg.role,
-        content: msg.content
+        // Only send string content to the history
+        content: typeof msg.content === 'string' ? msg.content : '[Video Embed]',
       }));
 
     try {
@@ -108,28 +91,22 @@ export const ChatInterface = ({ open, onOpenChange, userProfile }: ChatInterface
         throw new Error("API request failed");
       }
 
-      const { text: aiResponse } = await res.json();
+      // --- (MODIFIED) API RESPONSE HANDLING ---
+      const responseData = await res.json();
       
       let aiMessage: Message;
 
-      // --- NEW LOGIC FOR HANDLING THE RESPONSE ---
-      if (aiResponse.startsWith("YT_VIDEO::")) {
-        const videoId = aiResponse.replace("YT_VIDEO::", "");
-        
-        // 1. Set the floating video ID
-        setFloatingVideoId(videoId);
-        
-        // 2. Send a simple text message
+      if (responseData.type === 'video') {
+        // AI sent a video object. Add it directly to the chat.
         aiMessage = {
           role: "assistant",
-          content: "No worries at all! I found this video that should help, I'll play it for you now.",
+          content: responseData, // The content is the { type: 'video', data: ... } object
         };
-        
       } else {
         // It's a normal text response
         aiMessage = {
           role: "assistant",
-          content: aiResponse,
+          content: responseData.data, // The content is the text string
         };
       }
       
@@ -154,11 +131,8 @@ export const ChatInterface = ({ open, onOpenChange, userProfile }: ChatInterface
     }
   };
   
-  // When the modal closes, also close the video player
+  // No change to handleOpenChange
   const handleOpenChange = (isOpen: boolean) => {
-    if (!isOpen) {
-      setFloatingVideoId(null);
-    }
     onOpenChange(isOpen);
   };
 
@@ -185,7 +159,7 @@ export const ChatInterface = ({ open, onOpenChange, userProfile }: ChatInterface
         <div className="flex-1 overflow-y-auto px-6 py-6 bg-[#0a0a0a]">
           <div className="space-y-6 max-w-4xl mx-auto">
             
-            {/* The mapping logic is now simpler */}
+            {/* --- (MODIFIED) MAPPING LOGIC --- */}
             {messages.map((message, index) => (
               <div
                 key={index}
@@ -204,14 +178,25 @@ export const ChatInterface = ({ open, onOpenChange, userProfile }: ChatInterface
                 </div>
                 <div className="flex-1">
                   <div
-                    className={`rounded-lg px-4 py-3 ${
+                    className={`rounded-lg ${
                       message.role === "user"
-                        ? "bg-[#005c91] text-white"
-                        : "bg-[#1a1a1a] text-white"
+                        ? "bg-[#005c91] text-white px-4 py-3"
+                        : "bg-[#1a1a1a] text-white" 
+                    } ${
+                      // Remove padding if it's a video embed
+                      typeof message.content !== 'string' && message.content.type === 'video' ? 'p-0 overflow-hidden' : 'px-4 py-3'
                     }`}
                   >
-                    {/* It's now *always* text */}
-                    <p className="text-sm whitespace-pre-line leading-relaxed">{message.content}</p>
+                    {/* --- (NEW) Message Rendering Logic --- */}
+                    {typeof message.content === 'string' ? (
+                      // It's a string, just render it
+                      <p className="text-sm whitespace-pre-line leading-relaxed">{message.content}</p>
+                    ) : (
+                      // It's an object, check if it's our video
+                      message.content.type === 'video' && (
+                        <YouTubeEmbed videoData={message.content.data} />
+                      )
+                    )}
                   </div>
                   <span className="text-white/40 text-xs mt-1 block">
                     {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -256,13 +241,7 @@ export const ChatInterface = ({ open, onOpenChange, userProfile }: ChatInterface
           </div>
         </div>
 
-        {/* --- NEW: Floating Player Render --- */}
-        {floatingVideoId && (
-          <FloatingVideoPlayer 
-            videoId={floatingVideoId} 
-            onClose={() => setFloatingVideoId(null)} 
-          />
-        )}
+        {/* --- (REMOVED) The old FloatingVideoPlayer is gone --- */}
       </DialogContent>
     </Dialog>
   );

@@ -99,3 +99,98 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
   }
 }
+
+/* --- (NEW) YouTube Embed Styles --- */
+
+/* The main container for the embed */
+.youtube-embed-container {
+  width: 300px; /* You can adjust this width */
+  max-width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: #2a2a2a; /* Darker background for the embed */
+  border: 1px solid #3a3a3a;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* The preview state (before clicking play) */
+.youtube-preview {
+  position: relative;
+  cursor: pointer;
+}
+
+/* The thumbnail image */
+.youtube-thumbnail {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* The play button that sits on top */
+.play-button-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(0, 0, 0, 0.3);
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+.youtube-preview:hover .play-button-overlay {
+  opacity: 1;
+}
+
+.play-icon {
+  width: 60px;
+  height: 42px;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5));
+}
+
+/* The info box at the bottom (Title + YouTube) */
+.video-info {
+  padding: 10px 12px;
+  background-color: #2a2a2a; /* Match the container background */
+  color: #ffffff;
+}
+
+.video-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #f1f1f1; /* Lighter text for title */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  max-height: 40px; /* (15px * 1.3 * 2 lines) */
+}
+
+.video-source {
+  font-size: 13px;
+  color: #aaaaaa; /* Muted text for "YouTube" */
+  margin-top: 4px;
+}
+
+/* The player state (after clicking play) */
+.youtube-player-wrapper {
+  position: relative;
+  /* 16:9 Aspect Ratio */
+  padding-top: 56.25%; 
+  width: 100%;
+  height: 0;
+  background-color: #000;
+}
+
+.youtube-iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}

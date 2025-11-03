@@ -8,29 +8,29 @@ import {
   Content,
 } from "@google/generative-ai";
 
-// --- NEW FUNCTION TO CHECK YOUTUBE VIDEO STATUS (Your Layer 2) ---
-async function checkVideoAvailability(videoId: string): Promise<boolean> {
+// --- (MODIFIED) FUNCTION TO CHECK YOUTUBE VIDEO STATUS ---
+// This now returns the full video data object, not just 'true'
+async function checkVideoAvailability(videoId: string) {
   const YOUTUBE_KEY = process.env.YOUTUBE_API_KEY;
   if (!YOUTUBE_KEY) {
     console.error("YOUTUBE_API_KEY is not set.");
-    return false; // Fail safe
+    return null; // Fail safe
   }
 
-  // This is the URL from your research: videos.list
-  const url = `https://www.googleapis.com/youtube/v3/videos?part=status,contentDetails&id=${videoId}&key=${YOUTUBE_KEY}`;
+  const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,status,contentDetails&id=${videoId}&key=${YOUTUBE_KEY}`;
 
   try {
     const response = await fetch(url);
     if (!response.ok) {
       console.log(`YouTube API check failed for ${videoId}: ${response.status}`);
-      return false; // 404 Not Found, etc.
+      return null; // 404 Not Found, etc.
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as any; // Cast as 'any' to easily access properties
 
     if (!data.items || data.items.length === 0) {
       console.log(`Video check FAILED for ${videoId}: Video does not exist.`);
-      return false; // Video ID is invalid
+      return null; // Video ID is invalid
     }
 
     const video = data.items[0];
@@ -43,18 +43,24 @@ async function checkVideoAvailability(videoId: string): Promise<boolean> {
       (video.contentDetails && video.contentDetails.regionRestriction)
     ) {
       console.log(`Video check FAILED for ${videoId}: Not embeddable or is private/restricted.`);
-      return false;
+      return null;
     }
 
     console.log(`Video check SUCCESS for ${videoId}`);
-    return true; // The video is good!
+    
+    // --- (NEW) RETURN THE FULL DATA OBJECT ---
+    return {
+      videoId: video.id,
+      title: video.snippet.title,
+      thumbnailUrl: video.snippet.thumbnails.high?.url || video.snippet.thumbnails.default?.url, // Get best thumbnail
+    };
 
   } catch (error) {
     console.error(`Video check ERROR for ${videoId}:`, error);
-    return false;
+    return null;
   }
 }
-// --- END OF NEW FUNCTION ---
+// --- END OF MODIFIED FUNCTION ---
 
 
 export default async function handler(
@@ -66,7 +72,6 @@ export default async function handler(
       return res.status(405).json({ error: "Method not allowed" });
     }
 
-    // Get the initial user message and history
     let { history, message } = req.body;
 
     const apiKey = process.env.GEMINI_API_KEY; 
@@ -78,7 +83,7 @@ export default async function handler(
 
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash", // Your working model
+      model: "gemini-2.5-flash",
       systemInstruction: `You are HK AI, a personal AI mentor. Your goal is to help users discover skills, create learning paths, and monetize their talents.
       
       Your first message (the greeting) has already been sent to the user. This is the user's first *reply*. 
@@ -97,62 +102,53 @@ export default async function handler(
       Otherwise, just respond with helpful, conversational text.`,
     });
 
-    // Format the initial history
     const chatHistory: Content[] = history.map((msg: { role: string; content: string }) => ({
       role: msg.role === 'user' ? 'user' : 'model',
       parts: [{ text: msg.content }],
     }));
 
-    // Start the chat session
     const chat = model.startChat({
       history: chatHistory,
       generationConfig: {
         maxOutputTokens: 1000,
       },
     });
-
-    // --- THIS IS THE CORRECTED "SELF-CORRECTION" LOOP ---
     
-    let currentMessage = message; // This is the user's first message
+    let currentMessage = message;
     let attempts = 0;
     const MAX_ATTEMPTS = 3; 
 
     while (attempts < MAX_ATTEMPTS) {
-      // Send the user's message (or our "try again" message)
       const result = await chat.sendMessage(currentMessage);
       const response = result.response;
       const text = response.text();
 
-      // Check if the AI suggested a video
       if (text.startsWith("YT_VIDEO::")) {
         const videoId = text.replace("YT_VIDEO::", "");
         
-        // --- CHECK THE VIDEO ---
-        const isAvailable = await checkVideoAvailability(videoId);
+        // --- (MODIFIED) CHECK THE VIDEO ---
+        const videoData = await checkVideoAvailability(videoId);
 
-        if (isAvailable) {
-          // SUCCESS! The video is real. Send it to the user.
-          // We don't need to push to history, chat.sendMessage did it.
-          return res.status(200).json({ text });
+        if (videoData) {
+          // SUCCESS! The video is real. Send the rich data object.
+          return res.status(200).json({ type: 'video', data: videoData });
         } else {
           // FAIL! The video is dead.
           attempts++;
-          
-          // Prepare the *next* message to send to the AI
           currentMessage = "That video ID you provided was unavailable, private, or region-locked. Please find a *different* one from a popular, active channel.";
-          
-          // The loop will continue, and chat.sendMessage will be called with this new message.
-          // This automatically adds both the AI's bad response and our new "user" message to the history.
         }
       } else {
-        // It was a normal text response, not a video.
-        // Send it to the user immediately.
-        return res.status(200).json({ text });
+        // It was a normal text response.
+        // --- (MODIFIED) Send it in the new JSON format ---
+        return res.status(200).json({ type: 'text', data: text });
       }
     }
     
-    // If we tried 3 times and still failed, give up and send a text message.
-    return res.status(200).json({ text: "I'm trying to find a good video for you, but the ones I'm finding seem to be unavailable. Can I help with a text explanation instead?" });
+    // If we tried 3 times and still failed, give up.
+    return res.status(200).json({ 
+      type: 'text', 
+      data: "I'm trying to find a good video for you, but the ones I'm finding seem to be unavailable. Can I help with a text explanation instead?" 
+    });
 
   } catch (error) {
     console.error(error);
