@@ -8,8 +8,7 @@ import {
   Content,
 } from "@google/generative-ai";
 
-// --- (MODIFIED) FUNCTION TO CHECK YOUTUBE VIDEO STATUS ---
-// This now returns the full video data object, not just 'true'
+// --- (This function is still correct) ---
 async function checkVideoAvailability(videoId: string) {
   const YOUTUBE_KEY = process.env.YOUTUBE_API_KEY;
   if (!YOUTUBE_KEY) {
@@ -23,19 +22,18 @@ async function checkVideoAvailability(videoId: string) {
     const response = await fetch(url);
     if (!response.ok) {
       console.log(`YouTube API check failed for ${videoId}: ${response.status}`);
-      return null; // 404 Not Found, etc.
+      return null;
     }
 
-    const data = (await response.json()) as any; // Cast as 'any' to easily access properties
+    const data = (await response.json()) as any;
 
     if (!data.items || data.items.length === 0) {
       console.log(`Video check FAILED for ${videoId}: Video does not exist.`);
-      return null; // Video ID is invalid
+      return null;
     }
 
     const video = data.items[0];
 
-    // Check all the properties you mentioned
     if (
       video.status.privacyStatus !== "public" ||
       video.status.embeddable !== true ||
@@ -48,11 +46,10 @@ async function checkVideoAvailability(videoId: string) {
 
     console.log(`Video check SUCCESS for ${videoId}`);
     
-    // --- (NEW) RETURN THE FULL DATA OBJECT ---
     return {
       videoId: video.id,
       title: video.snippet.title,
-      thumbnailUrl: video.snippet.thumbnails.high?.url || video.snippet.thumbnails.default?.url, // Get best thumbnail
+      thumbnailUrl: video.snippet.thumbnails.high?.url || video.snippet.thumbnails.default?.url,
     };
 
   } catch (error) {
@@ -60,7 +57,7 @@ async function checkVideoAvailability(videoId: string) {
     return null;
   }
 }
-// --- END OF MODIFIED FUNCTION ---
+// --- END OF FUNCTION ---
 
 
 export default async function handler(
@@ -123,23 +120,29 @@ export default async function handler(
       const response = result.response;
       const text = response.text();
 
-      if (text.startsWith("YT_VIDEO::")) {
-        const videoId = text.replace("YT_VIDEO::", "");
+      // --- (THIS IS THE FIX) ---
+      // Check for the tag ANYWHERE in the string
+      const videoTagMatch = text.match(/YT_VIDEO::([\w-]+)/);
+
+      if (videoTagMatch) {
+        // videoTagMatch[0] is "YT_VIDEO::2ffG06F-j48"
+        // videoTagMatch[1] is just "2ffG06F-j48"
+        const videoId = videoTagMatch[1]; 
         
-        // --- (MODIFIED) CHECK THE VIDEO ---
         const videoData = await checkVideoAvailability(videoId);
 
         if (videoData) {
-          // SUCCESS! The video is real. Send the rich data object.
+          // SUCCESS! Send the video object.
+          // Note: We are ignoring the text part ("Nice! AI...") for now
+          // to make the video embed work. This is the simplest fix.
           return res.status(200).json({ type: 'video', data: videoData });
         } else {
-          // FAIL! The video is dead.
+          // FAIL! The video is dead. Tell the AI to try again.
           attempts++;
-          currentMessage = "That video ID you provided was unavailable, private, or region-locked. Please find a *different* one from a popular, active channel.";
+          currentMessage = "That video ID you provided was unavailable, private, or region-locked. Please find a *different* one.";
         }
       } else {
-        // It was a normal text response.
-        // --- (MODIFIED) Send it in the new JSON format ---
+        // It's a normal text response, no video tag found.
         return res.status(200).json({ type: 'text', data: text });
       }
     }
