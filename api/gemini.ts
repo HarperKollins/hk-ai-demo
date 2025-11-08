@@ -1,5 +1,11 @@
-// Import Vercel's Node.js types
+// api/gemini.ts
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { cleanModelText } from './_lib/cleanModelText.js';
+import { checkVideoAvailability } from './_lib/youtube.js';
+// --- THIS IS THE FIX ---
+// The path must start with "./" not "../"
+import { getTopicBySlug } from './_lib/config/freeCodeCampTopics.js'; 
 
 import {
   GoogleGenerativeAI,
@@ -8,57 +14,7 @@ import {
   Content,
 } from "@google/generative-ai";
 
-// --- (This function is still correct) ---
-async function checkVideoAvailability(videoId: string) {
-  const YOUTUBE_KEY = process.env.YOUTUBE_API_KEY;
-  if (!YOUTUBE_KEY) {
-    console.error("YOUTUBE_API_KEY is not set.");
-    return null; // Fail safe
-  }
-
-  const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,status,contentDetails&id=${videoId}&key=${YOUTUBE_KEY}`;
-
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      console.log(`YouTube API check failed for ${videoId}: ${response.status}`);
-      return null;
-    }
-
-    const data = (await response.json()) as any;
-
-    if (!data.items || data.items.length === 0) {
-      console.log(`Video check FAILED for ${videoId}: Video does not exist.`);
-      return null;
-    }
-
-    const video = data.items[0];
-
-    if (
-      video.status.privacyStatus !== "public" ||
-      video.status.embeddable !== true ||
-      video.status.uploadStatus !== "processed" ||
-      (video.contentDetails && video.contentDetails.regionRestriction)
-    ) {
-      console.log(`Video check FAILED for ${videoId}: Not embeddable or is private/restricted.`);
-      return null;
-    }
-
-    console.log(`Video check SUCCESS for ${videoId}`);
-    
-    return {
-      videoId: video.id,
-      title: video.snippet.title,
-      thumbnailUrl: video.snippet.thumbnails.high?.url || video.snippet.thumbnails.default?.url,
-    };
-
-  } catch (error) {
-    console.error(`Video check ERROR for ${videoId}:`, error);
-    return null;
-  }
-}
-// --- END OF FUNCTION ---
-
+// --- checkVideoAvailability function is in _lib/youtube.ts ---
 
 export default async function handler(
   req: VercelRequest, 
@@ -88,17 +44,27 @@ export default async function handler(
       
       **Be concise and impactful.** Keep your responses short and to the point, but maintain a friendly, "chill" tone. Avoid long, wordy paragraphs.
       
-      **IMPORTANT VIDEO RULES:**
-      1.  When you believe a YouTube video is helpful, you MUST respond with the following special format AND nothing else:
-          \`YT_VIDEO::[VIDEO_ID]\`
-      2.  **NEVER** invent a video ID.
-      3.  Try to suggest videos from popular, well-known, and active channels (like freeCodeCamp, The Net Ninja, Fireship, etc.). These videos are less likely to be unavailable.
-      
-      For example: \`YT_VIDEO::jfKfPfyJRdk\`
-      
-      Otherwise, just respond with helpful, conversational text.`,
-    });
+      **FORMATTING RULES:**
+      Always respond in plain text only. Do not use markdown. Do not use asterisks or underscores.
 
+      **--- SPECIAL COMMANDS ---**
+
+      **1. LESSON REQUEST:**
+      If the user's message is a request to start a lesson (e.g., "teach me html", "i want to learn python", "show me a video on css"), you MUST respond with ONLY the following special tag:
+      \`LESSON::[topic_slug]\`
+      
+      * "teach me html" -> \`LESSON::html_basics\`
+      * "i want to learn python" -> \`LESSON::python_intro\`
+      * "show me css grid" -> \`LESSON::css_grid\` (This will trigger a dynamic search)
+
+      **2. VIDEO REQUEST (YT_VIDEO):**
+      If the user *only* asks for a simple video embed (e.g., "show me a cool video", "what's that video you mentioned?"), use the \`YT_VIDEO\` tag:
+      \`YT_VIDEO::[VIDEO_ID]\`
+      
+      **3. NORMAL CHAT:**
+      For any other conversation, just respond with helpful, conversational text.`,
+    });
+    
     const chatHistory: Content[] = history.map((msg: { role: string; content: string }) => ({
       role: msg.role === 'user' ? 'user' : 'model',
       parts: [{ text: msg.content }],
@@ -119,38 +85,38 @@ export default async function handler(
       const result = await chat.sendMessage(currentMessage);
       const response = result.response;
       const text = response.text();
+      
+      // Check for our special tags
+      const lessonMatch = text.match(/LESSON::([\w-]+)/);
+      const videoMatch = text.match(/YT_VIDEO::([\w-]+)/);
 
-      // --- (THIS IS THE FIX) ---
-      // Check for the tag ANYWHERE in the string
-      const videoTagMatch = text.match(/YT_VIDEO::([\w-]+)/);
-
-      if (videoTagMatch) {
-        // videoTagMatch[0] is "YT_VIDEO::2ffG06F-j48"
-        // videoTagMatch[1] is just "2ffG06F-j48"
-        const videoId = videoTagMatch[1]; 
-        
+      if (lessonMatch) {
+        // AI wants to start a lesson
+        console.log(`Gemini responded with lesson tag: ${lessonMatch[1]}`);
+        return res.status(200).json({ type: 'lesson', data: lessonMatch[1] });
+      
+      } else if (videoMatch) {
+        // AI wants to embed a simple video
+        const videoId = videoMatch[1]; 
         const videoData = await checkVideoAvailability(videoId);
 
         if (videoData) {
-          // SUCCESS! Send the video object.
-          // Note: We are ignoring the text part ("Nice! AI...") for now
-          // to make the video embed work. This is the simplest fix.
           return res.status(200).json({ type: 'video', data: videoData });
         } else {
-          // FAIL! The video is dead. Tell the AI to try again.
           attempts++;
-          currentMessage = "That video ID you provided was unavailable, private, or region-locked. Please find a *different* one.";
+          currentMessage = "That video ID was unavailable. Please find a *different* one.";
         }
       } else {
-        // It's a normal text response, no video tag found.
-        return res.status(200).json({ type: 'text', data: text });
+        // It's a normal text response
+        const cleanedText = cleanModelText(text);
+        return res.status(200).json({ type: 'text', data: cleanedText });
       }
     }
     
-    // If we tried 3 times and still failed, give up.
+    const fallbackMessage = "I'm having trouble finding that resource. Can I help with a text explanation instead?";
     return res.status(200).json({ 
       type: 'text', 
-      data: "I'm trying to find a good video for you, but the ones I'm finding seem to be unavailable. Can I help with a text explanation instead?" 
+      data: cleanModelText(fallbackMessage)
     });
 
   } catch (error) {

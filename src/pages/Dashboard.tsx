@@ -1,3 +1,5 @@
+// src/pages/Dashboard.tsx
+
 import { useState } from "react";
 import { MessageSquare, LayoutDashboard, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
